@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+server.log
+posters/*.jpg
+!posters/.gitkeep
