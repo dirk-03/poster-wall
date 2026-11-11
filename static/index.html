@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>海报墙制作器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #0f1115; color: #eee; min-height: 100vh; }
+  header { text-align: center; padding: 28px 16px 4px; }
+  header h1 { font-size: 26px; }
+  header p { color: #888; margin-top: 6px; font-size: 14px; }
+  .panel { max-width: 1100px; margin: 16px auto; padding: 0 16px; display: flex;
+           gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .card { background: #1a1d24; border: 1px solid #2a2e38; border-radius: 12px;
+          padding: 14px 16px; flex: 1 1 260px; }
+  .card h3 { font-size: 15px; margin-bottom: 10px; color: #ffd866; }
+  input[type=text], input[type=number], select { width: 100%; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid #333; background: #12141a; color: #eee; margin-bottom: 8px; }
+  button { padding: 8px 16px; border: none; border-radius: 8px; background: #4f7cff;
+           color: #fff; cursor: pointer; font-size: 14px; }
+  button:hover { background: #6a90ff; }
+  button.ghost { background: #2a2e38; margin-left: 6px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .row label { font-size: 13px; color: #aaa; white-space: nowrap; }
+  .row input, .row select { margin-bottom: 0; }
+  .modes { display: flex; gap: 8px; justify-content: center; margin: 14px 0 0; }
+  .modes button { background: #2a2e38; }
+  .modes button.on { background: #4f7cff; }
+  #wall { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+          padding: 10px 16px; }
+  .item { position: relative; width: 120px; cursor: grab; }
+  .item img { width: 100%; border-radius: 6px; display: block; pointer-events: none; }
+  .item .cap { font-size: 12px; color: #999; text-align: center; margin-top: 4px;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .del { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.6);
+               color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px;
+               cursor: pointer; line-height: 1; font-size: 12px; }
+  .hint { text-align: center; color: #666; font-size: 13px; padding: 6px 16px; }
+  /* 自由排版画布 */
+  #boardWrap { display: none; max-width: 1100px; margin: 10px auto; padding: 0 16px; }
+  #board { position: relative; width: 100%; background: #16181f; border: 1px dashed #3a3f4d;
+           border-radius: 10px; overflow: hidden; touch-action: none; }
+  .pin { position: absolute; cursor: grab; border-radius: 4px; overflow: hidden;
+         box-shadow: 0 4px 14px rgba(0,0,0,.5); user-select: none; }
+  .pin img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+  .pin .rm { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px;
+             background: rgba(0,0,0,.65); color: #fff; border: none; border-radius: 50%;
+             font-size: 11px; cursor: pointer; line-height: 1; }
+  .pin.sel { outline: 2px solid #4f7cff; }
+  #result { text-align: center; padding: 16px 0 40px; }
+  #result img { max-width: 94%; border-radius: 10px; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+           background: #333; padding: 10px 20px; border-radius: 8px; display: none; z-index: 99; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎬 海报墙制作器</h1>
+  <p>豆瓣编号搜电影 · 本地上传 · 自动裁剪 · 自由排版一键拼贴</p>
+</header>
+
+<div class="panel">
+  <div class="card">
+    <h3>① 豆瓣电影编号</h3>
+    <div class="row">
+      <input type="text" id="dbid" placeholder="如 1292052（肖申克的救赎）">
+      <button onclick="addById()">获取</button>
+    </div>
+    <p style="font-size:12px;color:#777">编号 = 豆瓣电影页 URL subject/ 后的数字</p>
+  </div>
+  <div class="card">
+    <h3>② 手动粘贴海报链接</h3>
+    <div class="row">
+      <input type="text" id="purl" placeholder="https://...jpg">
+      <button onclick="addByUrl()">添加</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>③ 本地上传</h3>
+    <input type="file" id="file" accept="image/*" multiple onchange="uploadFiles(this)">
+  </div>
+</div>
+
+<div class="modes">
+  <button id="mGrid" class="on" onclick="setMode('grid')">▦ 网格拼贴</button>
+  <button id="mFree" onclick="setMode('free')">✥ 自由排版</button>
+</div>
+<p class="hint" id="hint">提示：网格模式按顺序排列；开启「自动裁剪」后所有海报统一为海报比例，整齐不变形</p>
+
+<!-- 网格模式设置 -->
+<div class="panel" id="gridOpts">
+  <div class="card">
+    <h3>网格设置</h3>
+    <div class="row"><label>列数</label><input type="number" id="cols" value="4" min="1" max="10"></div>
+    <div class="row"><label>间距</label><input type="number" id="gap" value="8" min="0" max="60"></div>
+    <div class="row"><label>单张宽</label><input type="number" id="width" value="300" min="100" max="800"></div>
+    <div class="row"><label>底色</label><input type="color" id="bg" value="#111111"></div>
+    <div class="row"><label>裁剪</label>
+      <select id="crop"><option value="1">自动裁剪为统一比例（推荐）</option>
+        <option value="0">保留原比例</option></select></div>
+    <div class="row" id="ratioRow"><label>比例</label>
+      <select id="ratio"><option value="2:3">2:3（电影海报）</option>
+        <option value="3:4">3:4</option><option value="1:1">1:1（方形）</option>
+        <option value="16:9">16:9（横版）</option></select></div>
+    <button onclick="makeCollage()">🖼 一键拼贴</button>
+    <button class="ghost" onclick="clearAll()">清空海报</button>
+  </div>
+</div>
+
+<!-- 自由排版画布 -->
+<div id="boardWrap">
+  <div class="panel">
+    <div class="card">
+      <h3>画布设置</h3>
+      <div class="row"><label>宽</label><input type="number" id="cw" value="1600" min="400" max="4000"></div>
+      <div class="row"><label>高</label><input type="number" id="ch" value="900" min="300" max="4000"></div>
+      <div class="row"><label>底色</label><input type="color" id="bgf" value="#111111"></div>
+      <button onclick="makeFree()">🖼 生成拼贴图</button>
+      <button class="ghost" onclick="clearPins()">清空画布</button>
+    </div>
+    <div class="card">
+      <h3>操作说明</h3>
+      <p style="font-size:13px;color:#aaa;line-height:1.8">
+        从下方海报库<b>拖拽</b>海报到画布任意位置<br>
+        画布内<b>拖动</b>海报调整位置，拖动时自动置顶<br>
+        每张海报会按 2:3 自动裁剪填满自身区域<br>
+        点海报右上角 × 移回海报库
+      </p>
+    </div>
+  </div>
+  <div id="board"></div>
+</div>
+
+<h3 class="hint" style="color:#555;margin-top:10px">— 海报库（可拖拽） —</h3>
+<div id="wall"></div>
+<div id="result"></div>
+<div id="toast"></div>
+
+<script>
+let posters = [], mode = 'grid', pins = [], zTop = 10;
+
+function toast(msg, bad) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.background = bad ? '#c0392b' : '#333';
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2500);
+}
+function render() {
+  document.getElementById('wall').innerHTML = posters.map((p, i) =>
+    `<div class="item" draggable="true" data-i="${i}" ondragstart="dragWall(event)">
+       <img src="/poster/${p.file}"><button class="del" onclick="del(${i})">×</button>
+       <div class="cap">${p.title || p.file}</div></div>`).join('');
+  document.getElementById('result').innerHTML = '';
+}
+function del(i) { posters.splice(i, 1); render(); }
+function clearAll() { posters = []; pins = []; render(); drawPins(); }
+function clearPins() { pins = []; drawPins(); }
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('mGrid').classList.toggle('on', m === 'grid');
+  document.getElementById('mFree').classList.toggle('on', m === 'free');
+  document.getElementById('gridOpts').style.display = m === 'grid' ? 'flex' : 'none';
+  document.getElementById('boardWrap').style.display = m === 'free' ? 'block' : 'none';
+  document.getElementById('hint').textContent = m === 'grid'
+    ? '提示：网格模式按顺序排列；开启「自动裁剪」后所有海报统一为海报比例，整齐不变形'
+    : '提示：从海报库拖拽海报到画布，画布内随意拖动摆放位置';
+  if (m === 'free') layoutBoard();
+}
+document.getElementById('crop').onchange = e =>
+  document.getElementById('ratioRow').style.display = e.target.value === '1' ? 'flex' : 'none';
+
+/* ---------- 添加海报 ---------- */
+async function addById() {
+  const id = document.getElementById('dbid').value.trim();
+  if (!id) return toast('请输入豆瓣编号', true);
+  toast('正在从豆瓣获取…');
+  try {
+    const r = await fetch('/api/movie/' + id);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || '获取失败');
+    posters.push(d); render(); toast(`已添加《${d.title}》`);
+  } catch (e) { toast(e.message, true); }
+}
+async function addByUrl() {
+  const url = document.getElementById('purl').value.trim();
+  if (!url) return toast('请输入海报链接', true);
+  const fd = new FormData(); fd.append('poster_url', url);
+  const r = await fetch('/api/url', { method: 'POST', body: fd });
+  const d = await r.json();
+  if (r.ok) { posters.push(d); render(); toast('已添加'); }
+  else toast(d.detail || '失败', true);
+}
+async function uploadFiles(inp) {
+  for (const f of inp.files) {
+    const fd = new FormData(); fd.append('file', f);
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (r.ok) posters.push(d); else toast(d.detail || '上传失败', true);
+  }
+  inp.value = ''; render();
+}
+
+/* ---------- 网格拼贴 ---------- */
+async function makeCollage() {
+  if (!posters.length) return toast('请先添加海报', true);
+  const fd = new FormData();
+  fd.append('files', posters.map(p => p.file).join(','));
+  fd.append('cols', cols.value); fd.append('gap', gap.value);
+  fd.append('bg', bg.value); fd.append('width', width.value);
+  fd.append('crop', crop.value); fd.append('ratio', ratio.value);
+  toast('正在拼贴…');
+  const r = await fetch('/api/collage', { method: 'POST', body: fd });
+  showResult(r);
+}
+
+/* ---------- 自由排版 ---------- */
+function layoutBoard() {
+  const b = document.getElementById('board');
+  b.style.aspectRatio = `${cw.value} / ${ch.value}`;
+}
+['cw', 'ch'].forEach(id => document.getElementById(id).onchange = layoutBoard);
+
+function dragWall(ev) {
+  ev.dataTransfer.setData('text/idx', ev.currentTarget.dataset.i);
+}
+const board = document.getElementById('board');
+board.addEventListener('dragover', e => e.preventDefault());
+board.addEventListener('drop', e => {
+  e.preventDefault();
+  const i = e.dataTransfer.getData('text/idx');
+  if (i === '' || !posters[i]) return;
+  const rect = board.getBoundingClientRect();
+  const fw = 0.14;                       // 海报宽占画布比例
+  const fh = fw * 1.5;                    // 2:3
+  pins.push({ file: posters[i].file, title: posters[i].title,
+    x: (e.clientX - rect.left) / rect.width - fw / 2,
+    y: (e.clientY - rect.top) / rect.height - fh / 2,
+    w: fw, h: fh, z: ++zTop });
+  drawPins();
+});
+function clampPin(p) {
+  p.x = Math.min(Math.max(p.x, -p.w * 0.9), 1 - p.w * 0.1);
+  p.y = Math.min(Math.max(p.y, -p.h * 0.9), 1 - p.h * 0.1);
+}
+function drawPins() {
+  board.querySelectorAll('.pin').forEach(el => el.remove());
+  pins.forEach((p, i) => {
+    const el = document.createElement('div');
+    el.className = 'pin';
+    el.style.cssText = `left:${p.x * 100}%;top:${p.y * 100}%;width:${p.w * 100}%;` +
+      `height:${p.h * 100}%;z-index:${p.z || 1}`;
+    el.innerHTML = `<img src="/poster/${p.file}"><button class="rm">×</button>`;
+    el.querySelector('.rm').onclick = ev => { ev.stopPropagation(); pins.splice(i, 1); drawPins(); };
+    // 指针拖动
+    el.addEventListener('pointerdown', ev => {
+      if (ev.target.classList.contains('rm')) return;
+      ev.preventDefault();
+      el.setPointerCapture(ev.pointerId);
+      const rect = board.getBoundingClientRect();
+      const sx = ev.clientX, sy = ev.clientY, ox = p.x, oy = p.y;
+      p.z = ++zTop; el.style.zIndex = p.z;
+      const move = e2 => {
+        p.x = ox + (e2.clientX - sx) / rect.width;
+        p.y = oy + (e2.clientY - sy) / rect.height;
+        clampPin(p);
+        el.style.left = p.x * 100 + '%'; el.style.top = p.y * 100 + '%';
+      };
+      const up = () => {
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+    });
+    board.appendChild(el);
+  });
+}
+async function makeFree() {
+  if (!pins.length) return toast('请先把海报拖到画布上', true);
+  const fd = new FormData();
+  fd.append('items', JSON.stringify(pins.map(p => ({ file: p.file, x: p.x, y: p.y, w: p.w, h: p.h }))));
+  fd.append('canvas_w', cw.value); fd.append('canvas_h', ch.value);
+  fd.append('bg', bgf.value);
+  toast('正在生成…');
+  const r = await fetch('/api/collage_free', { method: 'POST', body: fd });
+  showResult(r);
+}
+
+/* ---------- 结果 ---------- */
+async function showResult(r) {
+  const d = await r.json();
+  if (r.ok) {
+    document.getElementById('result').innerHTML =
+      `<h3 style="margin:10px">✅ 拼贴完成（${d.count} 张 · ${d.size}）</h3>
+       <a href="/poster/${d.file}" download><img src="/poster/${d.file}"></a>
+       <p style="color:#888;margin-top:8px">点击图片下载</p>`;
+    toast('完成');
+  } else toast(d.detail || '失败', true);
+}
+layoutBoard();
+</script>
+</body>
+</html>
