@@ -24,6 +24,19 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # 沙箱/内网环境可能缺 CA 证书，校验失败时自动降级
 import urllib3
 urllib3.disable_warnings()
+
+# 可选：配置自己的豆瓣 Cookie 可大幅降低反爬拦截率
+# Render 后台 → Environment → 添加 DOUBAN_COOKIE
+DOUBAN_COOKIE = os.environ.get("DOUBAN_COOKIE", "")
+
+def douban_headers(extra=None):
+    h = {"User-Agent": UA, "Referer": "https://movie.douban.com/"}
+    if DOUBAN_COOKIE:
+        h["Cookie"] = DOUBAN_COOKIE
+    if extra:
+        h.update(extra)
+    return h
+
 def get(url, **kw):
     kw.setdefault("timeout", 10)
     try:
@@ -44,26 +57,37 @@ def fetch_by_id(douban_id: str):
     api = f"https://m.douban.com/rexxar/api/v2/movie/{douban_id}"
     try:
         title, poster_url = None, None
-        # 第一优先：豆瓣移动端 JSON 接口（反爬较弱，含高清海报）
-        try:
-            r = get(api, headers={"User-Agent": UA, "Referer": url}, timeout=10)
-            if r.status_code == 200:
-                d = r.json()
-                title = d.get("title")
-                pic = d.get("pic") or {}
-                poster_url = pic.get("large") or pic.get("normal")
-        except Exception:
-            pass
+        # 第一优先：豆瓣移动端 JSON 接口（反爬较弱，含高清海报），带重试
+        for attempt in range(2):
+            try:
+                r = get(api, headers=douban_headers(), timeout=10)
+                if r.status_code == 200:
+                    d = r.json()
+                    title = d.get("title")
+                    pic = d.get("pic") or {}
+                    poster_url = pic.get("large") or pic.get("normal")
+                    if poster_url:
+                        break
+            except Exception:
+                pass
+            if attempt == 0:
+                time.sleep(1.5)  # 限流时稍作退避再试
         # 兜底：解析 PC 页 og:image
         if not poster_url:
-            r = get(url, headers={"User-Agent": UA, "Referer": "https://movie.douban.com/"}, timeout=10)
-            if r.status_code == 200:
-                m = re.search(r'<meta property="og:image" content="([^"]+)"', r.text)
-                t = re.search(r'<meta property="og:title" content="([^"]+)"', r.text)
-                poster_url = m.group(1) if m else None
-                title = title or (t.group(1) if t else None)
+            try:
+                r = get(url, headers=douban_headers(), timeout=10)
+                if r.status_code == 200:
+                    m = re.search(r'<meta property="og:image" content="([^"]+)"', r.text)
+                    t = re.search(r'<meta property="og:title" content="([^"]+)"', r.text)
+                    poster_url = m.group(1) if m else None
+                    title = title or (t.group(1) if t else None)
+            except Exception:
+                pass
         if not poster_url:
-            raise HTTPException(502, "豆瓣拒绝了请求（反爬限制），可稍后重试或改用「手动粘贴海报链接」")
+            tip = "豆瓣拒绝了请求（反爬限制）"
+            if not DOUBAN_COOKIE:
+                tip += "；在 Render 环境变量中配置 DOUBAN_COOKIE 可显著提升成功率，详见 README"
+            raise HTTPException(502, tip + "；也可改用「手动粘贴海报链接」")
         img = get(poster_url, headers={"User-Agent": UA, "Referer": "https://movie.douban.com/"}, timeout=10).content
         fname = _save(img)
         return {"ok": True, "file": fname,
