@@ -117,6 +117,11 @@
       <div class="row"><label>宽</label><input type="number" id="cw" value="1600" min="400" max="4000"></div>
       <div class="row"><label>高</label><input type="number" id="ch" value="900" min="300" max="4000"></div>
       <div class="row"><label>底色</label><input type="color" id="bgf" value="#111111"></div>
+      <div class="row"><label>海报大小</label><input type="range" id="psize" min="8" max="50" value="18" style="flex:1">
+        <span id="psizeVal" style="font-size:12px;color:#aaa;width:36px">18%</span></div>
+      <div class="row"><label>成品边距</label><input type="number" id="pad" value="0" min="0" max="100"> px</div>
+      <div class="row"><label><input type="checkbox" id="snap" checked style="width:auto"> 边缘吸附（海报贴海报自动对齐）</label></div>
+      <div class="row"><label><input type="checkbox" id="trim" checked style="width:auto"> 自动裁掉空白边（推荐）</label></div>
       <button onclick="makeFree()">🖼 生成拼贴图</button>
       <button class="ghost" onclick="clearPins()">清空画布</button>
     </div>
@@ -124,9 +129,9 @@
       <h3>操作说明</h3>
       <p style="font-size:13px;color:#aaa;line-height:1.8">
         从下方海报库<b>拖拽</b>海报到画布任意位置<br>
-        画布内<b>拖动</b>海报调整位置，拖动时自动置顶<br>
-        每张海报会按 2:3 自动裁剪填满自身区域<br>
-        点海报右上角 × 移回海报库
+        画布内<b>拖动</b>海报调整位置，靠近其他海报边缘时<b>自动吸附对齐</b><br>
+        开启「自动裁掉空白边」+ 边距设为 0，吸附后可完全<b>无缝合并</b><br>
+        「海报大小」决定成品分辨率：越大越清晰，建议配合大图调高画布宽
       </p>
     </div>
   </div>
@@ -233,14 +238,16 @@ board.addEventListener('drop', e => {
   const i = e.dataTransfer.getData('text/idx');
   if (i === '' || !posters[i]) return;
   const rect = board.getBoundingClientRect();
-  const fw = 0.14;                       // 海报宽占画布比例
-  const fh = fw * 1.5;                    // 2:3
+  const fw = document.getElementById('psize').value / 100;  // 海报宽占画布比例
+  const fh = fw * 1.5;                                       // 2:3
   pins.push({ file: posters[i].file, title: posters[i].title,
     x: (e.clientX - rect.left) / rect.width - fw / 2,
     y: (e.clientY - rect.top) / rect.height - fh / 2,
     w: fw, h: fh, z: ++zTop });
   drawPins();
 });
+document.getElementById('psize').oninput = e =>
+  document.getElementById('psizeVal').textContent = e.target.value + '%';
 function clampPin(p) {
   p.x = Math.min(Math.max(p.x, -p.w * 0.9), 1 - p.w * 0.1);
   p.y = Math.min(Math.max(p.y, -p.h * 0.9), 1 - p.h * 0.1);
@@ -254,7 +261,7 @@ function drawPins() {
       `height:${p.h * 100}%;z-index:${p.z || 1}`;
     el.innerHTML = `<img src="/poster/${p.file}"><button class="rm">×</button>`;
     el.querySelector('.rm').onclick = ev => { ev.stopPropagation(); pins.splice(i, 1); drawPins(); };
-    // 指针拖动
+    // 指针拖动（带边缘吸附）
     el.addEventListener('pointerdown', ev => {
       if (ev.target.classList.contains('rm')) return;
       ev.preventDefault();
@@ -262,9 +269,20 @@ function drawPins() {
       const rect = board.getBoundingClientRect();
       const sx = ev.clientX, sy = ev.clientY, ox = p.x, oy = p.y;
       p.z = ++zTop; el.style.zIndex = p.z;
+      const snapOn = document.getElementById('snap').checked;
+      const TH = 0.012;  // 吸附阈值（画布比例）
+      // 收集可对齐的参考线：其他海报的左右边、上下边
+      const vlines = [0, 1], hlines = [0, 1];
+      pins.forEach((q, j) => { if (j !== i) { vlines.push(q.x, q.x + q.w); hlines.push(q.y, q.y + q.h); } });
+      const snapVal = (v, lines, edges) => {
+        if (!snapOn) return v;
+        for (const L of lines) for (const e of edges)
+          if (Math.abs(v + e - L) < TH) return L - e;
+        return v;
+      };
       const move = e2 => {
-        p.x = ox + (e2.clientX - sx) / rect.width;
-        p.y = oy + (e2.clientY - sy) / rect.height;
+        p.x = snapVal(ox + (e2.clientX - sx) / rect.width, vlines, [0, p.w]);
+        p.y = snapVal(oy + (e2.clientY - sy) / rect.height, hlines, [0, p.h]);
         clampPin(p);
         el.style.left = p.x * 100 + '%'; el.style.top = p.y * 100 + '%';
       };
@@ -284,6 +302,8 @@ async function makeFree() {
   fd.append('items', JSON.stringify(pins.map(p => ({ file: p.file, x: p.x, y: p.y, w: p.w, h: p.h }))));
   fd.append('canvas_w', cw.value); fd.append('canvas_h', ch.value);
   fd.append('bg', bgf.value);
+  fd.append('trim', document.getElementById('trim').checked ? 1 : 0);
+  fd.append('padding', document.getElementById('pad').value || 0);
   toast('正在生成…');
   const r = await fetch('/api/collage_free', { method: 'POST', body: fd });
   showResult(r);
