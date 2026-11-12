@@ -117,6 +117,15 @@ async def upload(file: UploadFile = File(...)):
     fname = _save(data)
     return {"ok": True, "file": fname}
 
+OUT_FORMAT = "png"  # 拼贴成品输出格式：png 无损 / jpg 高质量
+
+def _save_out(canvas: Image.Image) -> str:
+    """保存拼贴成品，PNG 无损 / JPG 高质量"""
+    out = f"collage_{int(time.time())}_{uuid.uuid4().hex[:6]}.{OUT_FORMAT}"
+    kw = {} if OUT_FORMAT == "png" else {"quality": 95}
+    canvas.save(os.path.join(POSTER_DIR, out), **kw)
+    return out
+
 # ---------- 4. 一键拼贴（自动裁剪为统一比例） ----------
 def _center_crop(im: Image.Image, rw: int, rh: int) -> Image.Image:
     """居中裁剪到 rw:rh 比例"""
@@ -154,23 +163,25 @@ def collage(files: str = Form(...), cols: int = Form(4),
     if not imgs:
         raise HTTPException(400, "没有找到有效的海报文件")
     rows = (len(imgs) + cols - 1) // cols
-    cw = cols * width + (cols + 1) * gap
-    ch = rows * imgs[0].height + (rows + 1) * gap
+    # 海报顶满画布边缘，间隙只出现在海报之间
+    cw = cols * width + (cols - 1) * gap
+    ch = rows * imgs[0].height + (rows - 1) * gap
     canvas = Image.new("RGB", (cw, ch), bg)
     for i, im in enumerate(imgs):
-        x = gap + (i % cols) * (width + gap)
-        y = gap + (i // cols) * (im.height + gap)
+        x = (i % cols) * (width + gap)
+        y = (i // cols) * (im.height + gap)
         canvas.paste(im, (x, y))
-    out = f"collage_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
-    canvas.save(os.path.join(POSTER_DIR, out), quality=92)
+    out = _save_out(canvas)
     return {"ok": True, "file": out, "count": len(imgs),
             "size": f"{canvas.width}x{canvas.height}"}
 
 # ---------- 5. 自由排版拼贴（自定义位置） ----------
 @app.post("/api/collage_free")
 def collage_free(items: str = Form(...), canvas_w: int = Form(1600),
-                 canvas_h: int = Form(900), bg: str = Form("#111111")):
-    """items: JSON [{file,x,y,w,h}]，x/y/w/h 为画布比例 0~1，每张自动裁剪填满自己的框"""
+                 canvas_h: int = Form(900), bg: str = Form("#111111"),
+                 trim: int = Form(1), padding: int = Form(10)):
+    """items: JSON [{file,x,y,w,h}]，x/y/w/h 为画布比例 0~1，每张自动裁剪填满自己的框
+       trim=1 时自动裁掉画布空白区域，仅保留海报占用范围 + padding 边距"""
     import json as _json
     try:
         arr = _json.loads(items)
@@ -179,15 +190,26 @@ def collage_free(items: str = Form(...), canvas_w: int = Form(1600),
     arr = [a for a in arr if os.path.exists(os.path.join(POSTER_DIR, os.path.basename(a.get("file", ""))))]
     if not arr:
         raise HTTPException(400, "画布上还没有海报")
-    canvas = Image.new("RGB", (canvas_w, canvas_h), bg)
+    boxes = []
     for a in arr:
         im = Image.open(os.path.join(POSTER_DIR, os.path.basename(a["file"]))).convert("RGB")
         bw = max(1, int(canvas_w * float(a["w"])))
         bh = max(1, int(canvas_h * float(a["h"])))
-        im = _center_crop(im, bw, bh).resize((bw, bh))
-        canvas.paste(im, (int(canvas_w * float(a["x"])), int(canvas_h * float(a["y"]))))
-    out = f"collage_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
-    canvas.save(os.path.join(POSTER_DIR, out), quality=92)
+        px = int(canvas_w * float(a["x"]))
+        py = int(canvas_h * float(a["y"]))
+        boxes.append((_center_crop(im, bw, bh).resize((bw, bh)), px, py))
+    if trim:
+        x1 = min(b[1] for b in boxes); y1 = min(b[2] for b in boxes)
+        x2 = max(b[1] + b[0].width for b in boxes); y2 = max(b[2] + b[0].height for b in boxes)
+        cw, ch = (x2 - x1) + padding * 2, (y2 - y1) + padding * 2
+        canvas = Image.new("RGB", (cw, ch), bg)
+        for im, px, py in boxes:
+            canvas.paste(im, (px - x1 + padding, py - y1 + padding))
+    else:
+        canvas = Image.new("RGB", (canvas_w, canvas_h), bg)
+        for im, px, py in boxes:
+            canvas.paste(im, (px, py))
+    out = _save_out(canvas)
     return {"ok": True, "file": out, "count": len(arr),
             "size": f"{canvas.width}x{canvas.height}"}
 
@@ -199,12 +221,17 @@ def get_poster(name: str):
     return FileResponse(path)
 
 def _save(data: bytes) -> str:
+    """原图直存，不重新压缩，避免画质损耗"""
     try:
-        Image.open(io.BytesIO(data)).verify()
+        im = Image.open(io.BytesIO(data))
+        im.verify()
     except Exception:
         raise HTTPException(400, "不是有效的图片文件")
-    fname = f"{uuid.uuid4().hex[:10]}.jpg"
-    Image.open(io.BytesIO(data)).convert("RGB").save(os.path.join(POSTER_DIR, fname), quality=92)
+    ext = (Image.open(io.BytesIO(data)).format or "JPEG").lower()
+    ext = {"jpeg": "jpg"}.get(ext, ext)
+    fname = f"{uuid.uuid4().hex[:10]}.{ext}"
+    with open(os.path.join(POSTER_DIR, fname), "wb") as f:
+        f.write(data)
     return fname
 
 if __name__ == "__main__":

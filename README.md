@@ -20,6 +20,18 @@ python app.py
    - Start Command: `python app.py`
 5. 点 Deploy，约 2 分钟后得到 `https://xxx.onrender.com` 地址
 
+## 配置豆瓣 Cookie（强烈建议，防反爬）
+
+服务器 IP 直接请求豆瓣容易被拦截。配置自己账号的 Cookie 后成功率大幅提升：
+
+1. 浏览器登录 [豆瓣](https://www.douban.com)，打开任意电影页（如 movie.douban.com/subject/1292052）
+2. 按 F12 打开开发者工具 → **Network（网络）** 面板 → 刷新页面
+3. 点第一个 `subject/1292052` 请求 → 找到 **Request Headers** 里的 `Cookie:` 一行，复制冒号后的全部内容
+4. Render 后台 → 你的服务 → **Environment** → **Add Environment Variable**：
+   - Key: `DOUBAN_COOKIE`
+   - Value: 刚才复制的内容
+5. 保存后服务自动重启，生效
+
 ## 接口
 
 | 方法 | 路径 | 说明 |
